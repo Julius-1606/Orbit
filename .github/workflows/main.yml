@@ -16,15 +16,12 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.13'
 
       - name: Install Dependencies
         run: |
           pip install google-generativeai python-telegram-bot
 
       - name: Run Chaos Script
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          ChatID: ${{ secrets.ChatID }}
-        run: python chaos_mode.py
+        # Secrets are now hardcoded in orbit.py as requested
+        run: python orbit.py
