@@ -165,14 +165,36 @@ async def send_chaos():
     # 86-98: The Grind (QUIZ MODE)
     elif 86 <= roll <= 98:
         quotes = [
-            "Sleep is for the weak. Grind is for the eternal.",
-            "Lock in. The patient isn't gonna save themselves. 🩺",
-            "Academic Weapon status: Loading... 🔫",
-            "Pain is temporary. The 'Dr.' title is forever. 🥼",
-            "Stop scrolling. Start solving.",
-            "Coffee in. Knowledge out. ☕",
-            "The charts are moving. Why aren't you? 📉",
-            "Coding is just wizardry. Go cast a spell. 🧙‍♂️"
+            # Forex / Trading specific roasts 📈
+            "Your stop loss is tighter than your work ethic right now. 🛑💀",
+            "Green candles wait for no one. Neither does your rent. 🕯️💸",
+            "Market's volatile. Your focus? Non-existent. 📉🥴",
+            "Stop staring at the 1-minute chart and start grinding. ⏳😤",
+            "Liquidity sweep? Nah, just your attention span sweeping away. 🧹🌊",
+            "You're leveraging 100x on procrastination. Margin call imminent. 📞💣",
+            "Trading psychology rule #1: Don't be lazy. 🧠🚫",
+        
+            # General Academic / Work / Life roasts 🔥
+            "Do it for the plot. (And the paycheck). 🎬💰",
+            "Standing on business? More like sleeping on business. 🛌📉",
+            "POV: You actually finished a task for once. 🤡🎉",
+            "Delulu is not the solulu if you don't do the work. 🦄🚫",
+            "Your GPA is screaming, bestie. Help it. 😱📉",
+            "Academic comeback season starts in 3... 2... never mind, just start. 🎓🏁",
+            "Crying is free, but success costs rent. Get to work. 😭💳",
+            "Touching grass is a reward, not a lifestyle. Get back inside. 🌿🚫",
+            "You're not 'protecting your peace', you're avoiding your problems. 🧘‍♀️🚩",
+            "Main character energy requires main character effort. 💅⚡",
+            "Your future self is watching you scroll TikTok with pure disappointment. 📱😒",
+            "Gaslight yourself into thinking you love this. It works. 🔥🧠",
+            "If you focused as hard as you cringe, you'd be a billionaire. 😬💸",
+            "Not the academic downfall arc... fix it immediately. 📉🚧",
+            "Brain rot is real, and you are patient zero. 🧟📉",
+            "Imagine explaining to your mom why you failed. Yikes. 👩‍👦😬",
+            "Locked in? Or locked out of reality? Focus. 🔒🌍",
+            "You can sleep when you're dead. Or when you graduate. ⚰️🎓",
+            "Manifestation requires action, not just vibes. ✨🔨",
+            "Stop waiting for motivation. It’s not an Uber; it’s not coming. 🚗💨"
         ]
         unit = random.choice(config['current_units'])
         quote = random.choice(quotes)
@@ -230,3 +252,4 @@ async def send_chaos():
 
 if __name__ == "__main__":
     asyncio.run(send_chaos())
+
