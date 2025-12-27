@@ -3,7 +3,7 @@ name: Orbit Chaos Engine
 on:
   schedule:
     # Runs at minute 0 of every hour (e.g., 10:00, 11:00, 12:00)
-    - cron: '5 * * * *'
+    - cron: '20 * * * *'
   workflow_dispatch: # Allows you to click "Run Now" manually for testing
 
 jobs:
