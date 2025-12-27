@@ -88,7 +88,7 @@ async def send_chaos():
         except Exception as e:
             print(f"Gemini Error: {e}")
 
-    # 86-98: The Grind
+    # 86-98: The Grind (NOW WITH ACTUAL QUIZZES)
     elif 86 <= roll <= 98:
         quotes = [
             "Sleep is for the weak. Grind is for the eternal.",
@@ -113,9 +113,40 @@ async def send_chaos():
             "Future you is begging you to lock in right now."
         ]
         unit = random.choice(config['current_units'])
-        # Using <b> tags and parse_mode='HTML' to fix the bolding issue
-        msg = f"🚨 <b>{random.choice(quotes)}</b>\n\nOpen the app. We are doing {unit} NOW."
-        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='HTML')
+        quote = random.choice(quotes)
+        
+        # 1. Hype Message
+        await bot.send_message(chat_id=CHAT_ID, text=f"🚨 <b>{quote}</b>\n\nIncoming Pop Quiz: <b>{unit}</b>", parse_mode='HTML')
+        
+        # 2. Generate Quiz
+        prompt = f"""
+        Generate a multiple-choice quiz question about {unit} for a 4th Year University Student.
+        Respond ONLY with valid JSON in this format:
+        {{
+            "question": "The question text?",
+            "options": ["A", "B", "C", "D"],
+            "correct_id": 0,
+            "explanation": "Brief explanation."
+        }}
+        """
+        try:
+            response = model.generate_content(prompt)
+            # Clean JSON (Gemini loves adding ```json backticks)
+            text = response.text.replace('```json', '').replace('```', '').strip()
+            quiz_data = json.loads(text)
+            
+            # 3. Send Poll
+            await bot.send_poll(
+                chat_id=CHAT_ID,
+                question=quiz_data['question'],
+                options=quiz_data['options'],
+                type="quiz",
+                correct_option_id=quiz_data['correct_id'],
+                explanation=quiz_data['explanation']
+            )
+        except Exception as e:
+            print(f"Quiz Generation Failed: {e}")
+            await bot.send_message(chat_id=CHAT_ID, text="⚠️ AI Brain Freeze. Just go read a book.")
 
     # 99-100: GOD MODE
     else:
