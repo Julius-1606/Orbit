@@ -23,35 +23,43 @@ genai.configure(api_key=GEMINI_API_KEY)
 def get_working_model():
     try:
         print("🔍 Scanning available AI models...")
-        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        # Get all models that support generating text
+        all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # 🚫 THE BAN LIST: Exclude preview models with tiny rate limits (like 2.0/2.5)
+        safe_models = [m for m in all_models if "gemini-2" not in m and "experimental" not in m]
+        
+        # Debug: Show what we found
+        # print(f"DEBUG: Found Safe Models: {safe_models}")
         
         # Priority 1: Exact High-Quota Matches
         wishlist = [
             'models/gemini-1.5-flash',
             'models/gemini-1.5-flash-001',
-            'models/gemini-1.5-flash-latest',
+            'models/gemini-1.5-flash-002',
+            'models/gemini-1.5-flash-8b',
             'models/gemini-1.5-pro'
         ]
         
         for wish in wishlist:
-            if wish in models:
+            if wish in safe_models:
                 print(f"✅ Locked on target: {wish}")
                 return genai.GenerativeModel(wish.replace("models/", ""))
         
-        # Priority 2: Any model with '1.5-flash' in the name (Smart Fallback)
-        smart_fallback = next((m for m in models if '1.5-flash' in m), None)
+        # Priority 2: Smart Fallback (Any 1.5 Flash)
+        smart_fallback = next((m for m in safe_models if '1.5-flash' in m), None)
         if smart_fallback:
              print(f"⚠️ Smart Fallback to: {smart_fallback}")
              return genai.GenerativeModel(smart_fallback.replace("models/", ""))
 
-        # Priority 3: Any model with 'flash' (avoiding pro/ultra if possible for speed)
-        flash_fallback = next((m for m in models if 'flash' in m), None)
+        # Priority 3: Flash Fallback (Any Flash that isn't banned)
+        flash_fallback = next((m for m in safe_models if 'flash' in m), None)
         if flash_fallback:
              print(f"⚠️ Flash Fallback to: {flash_fallback}")
              return genai.GenerativeModel(flash_fallback.replace("models/", ""))
         
-        # Priority 4: Whatever is left (Last Resort)
-        first_option = next((m for m in models if 'gemini' in m), None)
+        # Priority 4: Last Resort
+        first_option = next((m for m in safe_models if 'gemini' in m), None)
         if first_option:
             print(f"⚠️ Absolute Fallback to: {first_option}")
             return genai.GenerativeModel(first_option.replace("models/", ""))
@@ -72,8 +80,8 @@ def generate_content_safe(prompt_text):
             return model.generate_content(prompt_text)
         except Exception as e:
             if "429" in str(e):
-                print(f"⏳ Hit Rate Limit. Cooling down (Attempt {attempt+1}/{max_retries})...")
-                time.sleep(10) # Wait 10s and retry
+                print(f"⏳ Hit Rate Limit. Cooling down 30s (Attempt {attempt+1}/{max_retries})...")
+                time.sleep(30) # Increased to 30s because 2.5 flash requires 24s+
             else:
                 raise e # Real error, let it crash
     return None
