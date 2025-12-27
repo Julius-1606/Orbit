@@ -11,9 +11,44 @@ GEMINI_API_KEY = "AIzaSyDRthGk2azAa8EcJYfzWfHmpuz8Z_Z5fGU"
 CHAT_ID = "6882899041"
 
 # --- CONFIGURATION ---
-# Switched to 1.5-flash to fix the "Error 429" rate limit crashes 🏎️
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+
+# 🛠️ AUTO-SELECTOR: Finds a model that actually exists so we stop guessing
+def get_working_model():
+    try:
+        print("🔍 Scanning available AI models...")
+        # Get all models that support generating text
+        models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        
+        # The Wishlist (Best to Worst)
+        wishlist = [
+            'models/gemini-1.5-flash',
+            'models/gemini-1.5-flash-001',
+            'models/gemini-1.5-flash-latest',
+            'models/gemini-1.5-pro',
+            'models/gemini-pro'
+        ]
+        
+        for wish in wishlist:
+            if wish in models:
+                print(f"✅ Locked on target: {wish}")
+                # We strip 'models/' prefix because GenerativeModel() sometimes prefers just the name
+                return genai.GenerativeModel(wish.replace("models/", ""))
+        
+        # If all else fails, pick the first valid Gemini model
+        first_option = next((m for m in models if 'gemini' in m), None)
+        if first_option:
+            print(f"⚠️ Fallback to: {first_option}")
+            return genai.GenerativeModel(first_option.replace("models/", ""))
+            
+    except Exception as e:
+        print(f"⚠️ Scan failed: {e}")
+    
+    # Absolute Hail Mary
+    print("🤞 Forcing 'gemini-1.5-flash' and praying...")
+    return genai.GenerativeModel('gemini-1.5-flash')
+
+model = get_working_model()
 
 def load_config():
     script_dir = os.path.dirname(os.path.abspath(__file__))
