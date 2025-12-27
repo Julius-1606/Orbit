@@ -11,21 +11,18 @@ GEMINI_API_KEY = "AIzaSyDRthGk2azAa8EcJYfzWfHmpuz8Z_Z5fGU"
 CHAT_ID = "6882899041"
 
 # --- CONFIGURATION ---
+# Switched to 1.5-flash to fix the "Error 429" rate limit crashes 🏎️
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 def load_config():
-    # Get the directory where THIS script is located
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    # Join it with the filename to get the full path
     config_path = os.path.join(script_dir, 'config.json')
-    
     try:
         with open(config_path, 'r') as f:
             return json.load(f)
     except FileNotFoundError:
         print(f"❌ CRITICAL ERROR: Could not find config.json at: {config_path}")
-        print("Make sure config.json is in the exact same folder as orbit.py!")
         return None
 
 async def send_chaos():
@@ -33,7 +30,7 @@ async def send_chaos():
     config = load_config()
     
     if not config:
-        return # Exit if config failed to load
+        return 
 
     # 🎲 THE ROLL OF DESTINY (1-100)
     roll = random.randint(1, 100)
@@ -47,10 +44,12 @@ async def send_chaos():
     # 51-85: Random Fact
     elif 51 <= roll <= 85:
         topic = random.choice(config['interests'])
-        prompt = f"Tell me a mind-blowing, short random fact about {topic}. Make it sound like a 'Did you know?' text."
+        prompt = f"Tell me a mind-blowing, short random fact about {topic}. Keep it under 2 sentences."
         try:
             response = model.generate_content(prompt)
-            await bot.send_message(chat_id=CHAT_ID, text=f"🎱 **Magic-∞ Fact:**\n\n{response.text}")
+            # We use HTML parsing for bold text
+            msg = f"🎱 <b>Magic-∞ Fact:</b>\n\n{response.text}"
+            await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='HTML')
         except Exception as e:
             print(f"Gemini Error: {e}")
 
@@ -79,15 +78,13 @@ async def send_chaos():
             "Future you is begging you to lock in right now."
         ]
         unit = random.choice(config['current_units'])
-        await bot.send_message(chat_id=CHAT_ID, text=f"🚨 **{random.choice(quotes)}**\n\nOpen the app. We are doing {unit} NOW.")
+        # Using <b> tags and parse_mode='HTML' to fix the bolding issue
+        msg = f"🚨 <b>{random.choice(quotes)}</b>\n\nOpen the app. We are doing {unit} NOW."
+        await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='HTML')
 
     # 99-100: GOD MODE
     else:
-        await bot.send_message(chat_id=CHAT_ID, text="👑 **GOD MODE ACTIVATED**\n\nPrepare yourself for a riddle that combines History and Physics...")
+        await bot.send_message(chat_id=CHAT_ID, text="👑 <b>GOD MODE ACTIVATED</b>\n\nPrepare yourself...", parse_mode='HTML')
 
 if __name__ == "__main__":
-    if "PASTE_YOUR" in TELEGRAM_TOKEN or "PASTE_YOUR" in GEMINI_API_KEY:
-        print("❌ Error: You forgot to paste your API keys in orbit.py!")
-    else:
-        asyncio.run(send_chaos())
-
+    asyncio.run(send_chaos())
