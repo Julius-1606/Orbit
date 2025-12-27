@@ -2,10 +2,24 @@
     "user_name": "Commander",
     "semester_status": "Year 4 - Redemption Arc",
     "current_units": [
-        "Biochemistry II",
-        "General Surgery",
-        "Community Health",
-        "Python Programming"
+                "Embryology",
+                "Medical Biochemistry",
+                "Human Physiology",
+                "Anatomy of the upper limb",
+                "Immunology",
+                "Medical Parasitology",
+                "General Pathology I",
+
+                "Clinical Methods",
+                "Anatomy of the abdomen and thorax",
+                "General Pharmacology I",
+                "Tropical Medicine",
+                "Internal Medicine I",
+                "Palliative Medicine",
+                "General Pharmacology",
+                "Skills Lab Methodology",
+                "Complimentary medicine",
+                "Essentials of disaster management"
     ],
     "unit_inventory": {
         "Year 1": {
@@ -126,3 +140,4 @@
     "difficulty": "Medium"
 
 }
+
