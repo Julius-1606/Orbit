@@ -121,6 +121,11 @@ async def send_chaos():
         # 2. Generate Quiz
         prompt = f"""
         Generate a multiple-choice quiz question about {unit} for a 4th Year University Student.
+        
+        CRITICAL: Telegram Polls have strict character limits.
+        1. The 'question' MUST be under 250 characters.
+        2. Each 'option' MUST be under 100 characters.
+        
         Respond ONLY with valid JSON in this format:
         {{
             "question": "The question text?",
