@@ -7,6 +7,7 @@ warnings.filterwarnings("ignore")
 import streamlit as st
 import json
 import time
+import random
 import google.generativeai as genai
 
 # --- 🔐 SECURE KEYCHAIN ---
@@ -114,8 +115,8 @@ def save_config(config):
     with open(get_config_path(), 'w') as f: json.dump(config, f, indent=4)
     st.toast("Settings Saved! 💾", icon="✅")
 
-st.title("🛰️ Orbit: Academic Weapon Control")
-st.markdown("*Commander's Log: Semester 4 - Redemption Arc*")
+st.title("🛰️ Orbit: Your Personal Academic Weapon")
+st.markdown("*Doc in the making*")
 config = load_config()
 
 if config:
@@ -134,7 +135,7 @@ if config:
         st.header("🎯 Active Loadout")
         for unit in config['current_units']: st.caption(f"• {unit}")
 
-    tab1, tab2, tab3 = st.tabs(["💬 Orbit Chat", "📚 Curriculum Manager", "🎲 Chaos Settings"])
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 Orbit Chat", "📝 Chaos Quiz", "📚 Curriculum Manager", "🎲 Chaos Settings"])
 
     with tab1:
         st.subheader("🧠 Neural Link")
@@ -147,14 +148,98 @@ if config:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     ctx = f"You are Orbit. User studies: {', '.join(config['current_units'])}. Difficulty: {config['difficulty']}. Question: {prompt}"
-                    response = ask_orbit(ctx)
-                    if response and response.text:
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    response_obj = ask_orbit(ctx)
+                    if response_obj and response_obj.text:
+                        st.markdown(response_obj.text)
+                        st.session_state.messages.append({"role": "assistant", "content": response_obj.text})
                     else:
                         st.error("⚠️ Connection Interrupted. Check Keys.")
 
+    # --- TAB 2: CHAOS QUIZ GENERATOR ---
     with tab2:
+        st.subheader("📝 Generated Quiz")
+        st.caption("Generates a random number of questions (1-10) for a random unit.")
+        
+        col_q1, col_q2 = st.columns([1, 3])
+        with col_q1:
+            if st.button("🎲 Roll for Quiz", use_container_width=True):
+                if not config['current_units']:
+                    st.error("No units loaded!")
+                else:
+                    with st.spinner("Generating Chaos..."):
+                        # 1. Random Parameters
+                        target_unit = random.choice(config['current_units'])
+                        num_questions = random.randint(1, 10)
+                        
+                        # 2. Batch Request (Saves API Limits)
+                        q_prompt = f"""
+                        Generate {num_questions} multiple-choice questions about {target_unit} for a 4th Year Student.
+                        Difficulty: {config['difficulty']}.
+                        
+                        Return ONLY a raw JSON list of objects. No markdown formatting.
+                        Format:
+                        [
+                            {{
+                                "q": "Question text",
+                                "o": ["Option A", "Option B", "Option C", "Option D"],
+                                "a": "Correct Option Text (e.g. Option A)",
+                                "e": "Explanation"
+                            }}
+                        ]
+                        """
+                        response = ask_orbit(q_prompt)
+                        
+                        if response and response.text:
+                            try:
+                                clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                                quiz_data = json.loads(clean_text)
+                                st.session_state['quiz_data'] = quiz_data
+                                st.session_state['quiz_unit'] = target_unit
+                                st.session_state['quiz_answers'] = {} # Reset answers
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to parse quiz: {e}")
+                        else:
+                            st.error("AI returned silence.")
+
+        with col_q2:
+            if 'quiz_data' in st.session_state:
+                st.info(f"**Unit:** {st.session_state['quiz_unit']} | **Questions:** {len(st.session_state['quiz_data'])}")
+                
+                with st.form("quiz_form"):
+                    for i, q in enumerate(st.session_state['quiz_data']):
+                        st.markdown(f"**{i+1}. {q['q']}**")
+                        # Use a unique key for each question's radio button
+                        st.session_state['quiz_answers'][i] = st.radio(
+                            "Select answer:", 
+                            q['o'], 
+                            key=f"q_{i}", 
+                            index=None,
+                            label_visibility="collapsed"
+                        )
+                        st.divider()
+                    
+                    submitted = st.form_submit_button("Submit Quiz")
+                    
+                    if submitted:
+                        score = 0
+                        total = len(st.session_state['quiz_data'])
+                        for i, q in enumerate(st.session_state['quiz_data']):
+                            user_ans = st.session_state['quiz_answers'].get(i)
+                            if user_ans == q['a']:
+                                score += 1
+                                st.success(f"Q{i+1}: Correct! ✅")
+                            else:
+                                st.error(f"Q{i+1}: Wrong. Correct: {q['a']}")
+                                st.caption(f"ℹ️ {q['e']}")
+                        
+                        st.metric("Final Score", f"{score}/{total}")
+                        if score == total:
+                            st.balloons()
+            else:
+                st.write("No active quiz. Hit the Roll button.")
+
+    with tab3:
         col1, col2 = st.columns(2)
         with col1:
             years = list(config['unit_inventory'].keys())
@@ -180,7 +265,7 @@ if config:
                     save_config(config)
                     st.rerun()
 
-    with tab3:
+    with tab4:
         curr = st.text_area("Interests", ", ".join(config['interests']))
         if st.button("Update Interests"):
             config['interests'] = [x.strip() for x in curr.split(",")]
