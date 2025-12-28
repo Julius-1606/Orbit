@@ -15,34 +15,37 @@ import google.generativeai as genai
 from telegram import Bot
 
 # --- 🔐 SECRETS MANAGEMENT ---
-# Try to get secrets from Environment Variables (GitHub Actions / Local Env)
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 KEYS_STRING = os.environ.get("GEMINI_KEYS")
 
-# Fallback: If running locally without Env Vars, try to read from a local secrets file
 if not TELEGRAM_TOKEN or not KEYS_STRING:
     try:
-        # Check if we can find them in .streamlit/secrets.toml (Reusing dashboard secrets)
         import toml
         script_dir = os.path.dirname(os.path.abspath(__file__))
         secrets_path = os.path.join(script_dir, ".streamlit", "secrets.toml")
         with open(secrets_path, "r") as f:
             local_secrets = toml.load(f)
             TELEGRAM_TOKEN = TELEGRAM_TOKEN or local_secrets.get("TELEGRAM_TOKEN")
-            GEMINI_API_KEYS = local_secrets.get("GEMINI_KEYS") # Expecting a list in TOML
+            raw_keys = local_secrets.get("GEMINI_KEYS")
+            if isinstance(raw_keys, list):
+                GEMINI_API_KEYS = raw_keys
+            elif isinstance(raw_keys, str):
+                GEMINI_API_KEYS = raw_keys.split(",")
+            else:
+                GEMINI_API_KEYS = []
     except Exception:
         pass
 else:
-    # If found in Env Vars (GitHub), split the comma-separated string into a list
     GEMINI_API_KEYS = KEYS_STRING.split(",") if KEYS_STRING else []
 
-# 🛑 SECURITY CHECK
+# Clean keys
+GEMINI_API_KEYS = [k.strip() for k in GEMINI_API_KEYS if k.strip()]
+
 if not TELEGRAM_TOKEN or not GEMINI_API_KEYS:
-    print("❌ FATAL ERROR: Secrets not found. Set TELEGRAM_TOKEN and GEMINI_KEYS.")
+    print("❌ FATAL ERROR: Secrets not found.")
     sys.exit(1)
 
 CHAT_ID = "6882899041" 
-
 CURRENT_KEY_INDEX = 0
 
 # --- CONFIGURATION & ROTATION ---
@@ -50,7 +53,10 @@ def configure_genai():
     global CURRENT_KEY_INDEX
     if not GEMINI_API_KEYS: return
     key = GEMINI_API_KEYS[CURRENT_KEY_INDEX]
-    genai.configure(api_key=key)
+    try:
+        genai.configure(api_key=key)
+    except Exception as e:
+        print(f"⚠️ Config Error on Key #{CURRENT_KEY_INDEX+1}: {e}")
 
 def rotate_key():
     global CURRENT_KEY_INDEX
@@ -58,51 +64,59 @@ def rotate_key():
         CURRENT_KEY_INDEX = (CURRENT_KEY_INDEX + 1) % len(GEMINI_API_KEYS)
         print(f"🔄 Rotating to Backup Key #{CURRENT_KEY_INDEX + 1}...")
         configure_genai()
+        # Re-run model selector to ensure new key sees the model
+        global model
+        model = get_valid_model() 
         return True
-    else:
-        print("⚠️ No backup keys found!")
-        return False
+    return False
 
-# Initialize first key
-configure_genai()
-
-# 🛠️ AUTO-SELECTOR
-def get_working_model():
+# 📡 SONAR: Find what models actually exist for you
+def get_valid_model():
+    print("🔍 Sonar Scanning for valid models...")
     try:
-        print("🔍 Scanning available AI models...")
-        all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        models = list(genai.list_models())
+        valid_models = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
         
-        # 🚫 BAN LIST
-        safe_models = [m for m in all_models if "gemini-2" not in m and "experimental" not in m]
+        # 1. Look for standard 1.5 flash
+        for m in valid_models:
+            if 'gemini-1.5-flash' in m and 'latest' not in m and 'exp' not in m:
+                print(f"✅ Locked on target: {m}")
+                return genai.GenerativeModel(m.replace("models/", ""))
         
-        wishlist = ['models/gemini-1.5-flash', 'models/gemini-1.5-flash-001', 'models/gemini-1.5-pro']
-        for wish in wishlist:
-            if wish in safe_models:
-                print(f"✅ Locked on target: {wish}")
-                return genai.GenerativeModel(wish.replace("models/", ""))
-        
-        # Fallbacks
-        fallback = next((m for m in safe_models if '1.5-flash' in m), None)
-        if fallback: return genai.GenerativeModel(fallback.replace("models/", ""))
+        # 2. Look for ANY flash (The fallback that worked for you!)
+        for m in valid_models:
+             if 'flash' in m and 'gemini-2' not in m and 'exp' not in m:
+                print(f"⚠️ Flash Fallback: {m}")
+                return genai.GenerativeModel(m.replace("models/", ""))
+
+        if valid_models:
+            return genai.GenerativeModel(valid_models[0].replace("models/", ""))
             
     except Exception as e:
         print(f"⚠️ Scan failed: {e}")
     
-    print("🤞 Hard-Forcing 'gemini-1.5-flash'...")
+    print("🤞 Sonar failed. Forcing 'gemini-1.5-flash'...")
     return genai.GenerativeModel('gemini-1.5-flash')
 
-model = get_working_model()
+configure_genai()
+model = get_valid_model()
 
 # 🛡️ SAFE GENERATOR
 def generate_content_safe(prompt_text):
+    global model
     max_retries = 3
     for attempt in range(max_retries):
         try:
             return model.generate_content(prompt_text)
         except Exception as e:
             err_msg = str(e)
-            if "429" in err_msg or "403" in err_msg:
-                print(f"⏳ Limit Hit. (Attempt {attempt+1})")
+            if "404" in err_msg:
+                print("⚠️ Model 404. Re-scanning...")
+                model = get_valid_model()
+                time.sleep(1)
+                continue
+            elif "429" in err_msg or "403" in err_msg:
+                print(f"⏳ API Issue ({err_msg}). Rotating...")
                 if rotate_key():
                     time.sleep(2)
                     continue
@@ -113,15 +127,22 @@ def generate_content_safe(prompt_text):
                 return None
     return None
 
+# 🛡️ TELEGRAM SAFETY VALVE
+async def send_safe_message(bot, chat_id, text):
+    try:
+        # Try sending with HTML (Bold text)
+        await bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML')
+    except Exception as e:
+        print(f"⚠️ HTML Parse Error: {e}. Sending raw text.")
+        # Fallback to plain text if HTML fails (Prevents crash)
+        await bot.send_message(chat_id=chat_id, text=text)
+
 def load_config():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(script_dir, 'config.json')
     try:
-        with open(config_path, 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        print(f"❌ CRITICAL ERROR: Could not find config.json")
-        return None
+        with open(config_path, 'r') as f: return json.load(f)
+    except FileNotFoundError: return None
 
 async def send_chaos():
     bot = Bot(token=TELEGRAM_TOKEN)
@@ -129,69 +150,45 @@ async def send_chaos():
     
     if not config: return 
 
-    # --- LOGIC START ---
-    if "--quiz" in sys.argv:
-        print("🫡 COMMAND RECEIVED: Forcing Quiz Protocol.")
-        roll = 90
-    elif "--fact" in sys.argv:
-        print("🫡 COMMAND RECEIVED: Forcing Knowledge Drop.")
-        roll = 60
-    else:
-        roll = random.randint(1, 100)
-        print(f"🎲 Rolled a {roll}")
+    if "--quiz" in sys.argv: roll = 90
+    elif "--fact" in sys.argv: roll = 60
+    else: roll = random.randint(1, 100)
+    print(f"🎲 Rolled a {roll}")
 
     if roll <= 50:
         print("Silence is golden.")
         return
 
-    # FACT
     elif 51 <= roll <= 85:
         topic = random.choice(config['interests'])
         prompt = f"Tell me a mind-blowing, short random fact about {topic}. Keep it under 2 sentences."
         response = generate_content_safe(prompt)
         if response and response.text:
             msg = f"🎱 <b>Magic-∞ Fact:</b>\n\n{response.text}"
-            await bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode='HTML')
+            await send_safe_message(bot, CHAT_ID, msg)
+        else:
+            print("⚠️ No response for Fact")
 
-    # QUIZ
     elif 86 <= roll <= 98:
         quotes = [
-            # Forex / Trading specific roasts 📈
             "Your stop loss is tighter than your work ethic right now. 🛑💀",
             "Green candles wait for no one. Neither does your rent. 🕯️💸",
             "Market's volatile. Your focus? Non-existent. 📉🥴",
             "Stop staring at the 1-minute chart and start grinding. ⏳😤",
-            "Liquidity sweep? Nah, just your attention span sweeping away. 🧹🌊",
-            "You're leveraging 100x on procrastination. Margin call imminent. 📞💣",
-            "Trading psychology rule #1: Don't be lazy. 🧠🚫",
-
-            # General Academic / Work / Life roasts 🔥
             "Do it for the plot. (And the paycheck). 🎬💰",
             "Standing on business? More like sleeping on business. 🛌📉",
-            "POV: You actually finished a task for once. 🤡🎉",
             "Delulu is not the solulu if you don't do the work. 🦄🚫",
-            "Your GPA is screaming, bestie. Help it. 😱📉",
             "Academic comeback season starts in 3... 2... never mind, just start. 🎓🏁",
-            "Crying is free, but success costs rent. Get to work. 😭💳",
-            "Touching grass is a reward, not a lifestyle. Get back inside. 🌿🚫",
-            "You're not 'protecting your peace', you're avoiding your problems. 🧘‍♀️🚩",
-            "Main character energy requires main character effort. 💅⚡",
-            "Your future self is watching you scroll TikTok with pure disappointment. 📱😒",
-            "Gaslight yourself into thinking you love this. It works. 🔥🧠",
-            "If you focused as hard as you cringe, you'd be a billionaire. 😬💸",
             "Not the academic downfall arc... fix it immediately. 📉🚧",
             "Brain rot is real, and you are patient zero. 🧟📉",
-            "Imagine explaining to your mom why you failed. Yikes. 👩‍👦😬",
-            "Locked in? Or locked out of reality? Focus. 🔒🌍",
-            "You can sleep when you're dead. Or when you graduate. ⚰️🎓",
-            "Manifestation requires action, not just vibes. ✨🔨",
-            "Stop waiting for motivation. It’s not an Uber; it’s not coming. 🚗💨"
+            "Locked in? Or locked out of reality? Focus. 🔒🌍"
         ]
         
         unit = random.choice(config['current_units'])
         quote = random.choice(quotes)
-
-        await bot.send_message(chat_id=CHAT_ID, text=f"🚨 <b>{quote}</b>\n\nIncoming Pop Quiz: <b>{unit}</b>", parse_mode='HTML')
+        
+        # Send Hype Message safely
+        await send_safe_message(bot, CHAT_ID, f"🚨 <b>{quote}</b>\n\nIncoming Pop Quiz: <b>{unit}</b>")
         
         prompt = f"""
         Generate a multiple-choice quiz about {unit} for a 4th Year Student.
@@ -203,6 +200,11 @@ async def send_chaos():
             try:
                 text = response.text.replace('```json', '').replace('```', '').strip()
                 data = json.loads(text)
+                
+                # LIST vs DICT Fix
+                if isinstance(data, list):
+                    data = data[0]
+                
                 await bot.send_poll(
                     chat_id=CHAT_ID,
                     question=data['question'][:297],
@@ -213,9 +215,10 @@ async def send_chaos():
                 )
             except Exception as e:
                 print(f"Quiz Error: {e}")
-
+        else:
+             print("⚠️ No response for Quiz")
     else:
-        await bot.send_message(chat_id=CHAT_ID, text="👑 <b>GOD MODE ACTIVATED</b>", parse_mode='HTML')
+        await send_safe_message(bot, CHAT_ID, "👑 <b>GOD MODE ACTIVATED</b>")
 
 if __name__ == "__main__":
     asyncio.run(send_chaos())
