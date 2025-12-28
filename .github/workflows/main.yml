@@ -2,9 +2,9 @@ name: Orbit Chaos Engine
 
 on:
   schedule:
-    # Runs at minute 0 of every hour (e.g., 10:00, 11:00, 12:00)
+    # Runs every 30 minutes (e.g., 10:00, 10:30, 11:00...)
     - cron: '*/30 * * * *'
-  workflow_dispatch: # Allows you to click "Run Now" manually for testing
+  workflow_dispatch:
 
 jobs:
   chaos-roll:
@@ -20,8 +20,11 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install google-generativeai python-telegram-bot
+          pip install -r requirements.txt
 
       - name: Run Chaos Script
-        # Secrets are now hardcoded in orbit.py as requested
+        env:
+          # Mapping repository secrets to the script's environment
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          GEMINI_KEYS: ${{ secrets.GEMINI_KEYS }}
         run: python orbit.py
