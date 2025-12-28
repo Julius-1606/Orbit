@@ -9,22 +9,25 @@ import json
 import time
 import google.generativeai as genai
 
-# --- 🔐 SECURE KEYCHAIN (Updated for String Format) ---
+# --- 🔐 SECURE KEYCHAIN ---
+GEMINI_API_KEYS = []
 try:
-    # 1. Try Streamlit Secrets
-    raw_keys = st.secrets["GEMINI_KEYS"]
-    if isinstance(raw_keys, list):
-        GEMINI_API_KEYS = raw_keys
-    else:
-        # Split string by comma
-        GEMINI_API_KEYS = [k.strip() for k in raw_keys.split(",")]
+    raw_keys = st.secrets.get("GEMINI_KEYS")
+    if raw_keys:
+        if isinstance(raw_keys, list):
+            GEMINI_API_KEYS = raw_keys
+        else:
+            GEMINI_API_KEYS = [k.strip() for k in raw_keys.split(",")]
 except Exception:
+    pass
+
+if not GEMINI_API_KEYS:
     try:
-        # 2. Try Environment Variables
         keys_str = os.environ.get("GEMINI_KEYS")
-        GEMINI_API_KEYS = keys_str.split(",") if keys_str else []
+        if keys_str:
+            GEMINI_API_KEYS = [k.strip() for k in keys_str.split(",")]
     except Exception:
-        GEMINI_API_KEYS = []
+        pass
 
 if not GEMINI_API_KEYS:
     st.error("❌ NO API KEYS FOUND! Please configure secrets.")
@@ -44,25 +47,34 @@ def rotate_key():
         st.session_state.key_index = (st.session_state.key_index + 1) % len(GEMINI_API_KEYS)
         configure_genai()
         st.toast(f"🔄 Swapping to Key #{st.session_state.key_index + 1}", icon="🔑")
+        global model
+        model = get_valid_model()
         return True
     return False
 
 configure_genai()
 
-# 🛠️ AUTO-SELECTOR (Safe Version)
-def get_working_model():
+# 📡 SONAR (Copied from Orbit.py)
+def get_valid_model():
     try:
-        all_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-        wishlist = ['models/gemini-1.5-flash-001', 'models/gemini-1.5-flash', 'models/gemini-1.5-pro']
-        for wish in wishlist:
-            if wish in all_models: return genai.GenerativeModel(wish.replace("models/", ""))
+        models = list(genai.list_models())
+        valid_models = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
         
-        fallback = next((m for m in all_models if 'flash' in m and '001' in m), None)
-        if fallback: return genai.GenerativeModel(fallback.replace("models/", ""))
-    except Exception: pass
+        for m in valid_models:
+            if 'gemini-1.5-flash' in m and 'latest' not in m and 'exp' not in m:
+                return genai.GenerativeModel(m.replace("models/", ""))
+        
+        for m in valid_models:
+             if 'flash' in m and 'gemini-2' not in m and 'exp' not in m:
+                return genai.GenerativeModel(m.replace("models/", ""))
+
+        if valid_models:
+            return genai.GenerativeModel(valid_models[0].replace("models/", ""))
+    except Exception:
+        pass
     return genai.GenerativeModel('gemini-1.5-flash')
 
-model = get_working_model()
+model = get_valid_model()
 
 def ask_orbit(prompt):
     global model
@@ -72,22 +84,17 @@ def ask_orbit(prompt):
             return model.generate_content(prompt)
         except Exception as e:
             err_msg = str(e)
-            # Handle specific Leaked Key error (403) separate from Rate Limit (429)
             if "leaked" in err_msg.lower() or "403" in err_msg:
-                st.toast(f"⚠️ Key #{st.session_state.key_index + 1} Burned (Leaked). Rotating...", icon="🔥")
-                if rotate_key():
+                 st.toast(f"⚠️ Key #{st.session_state.key_index+1} Leaked. Rotating...", icon="🔥")
+                 if rotate_key():
                     time.sleep(1)
                     continue
             elif "429" in err_msg:
-                st.toast("⏳ Rate Limit Hit. Rotating...", icon="⏱️")
                 if rotate_key():
                     time.sleep(1)
                     continue
             
             print(f"❌ Chat Error: {err_msg}")
-            # If we run out of retries or keys
-            if attempt == max_retries - 1:
-                return f"ERROR: {err_msg}"
             return None
     return None
 
@@ -140,16 +147,12 @@ if config:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     ctx = f"You are Orbit. User studies: {', '.join(config['current_units'])}. Difficulty: {config['difficulty']}. Question: {prompt}"
-                    response_obj = ask_orbit(ctx)
-                    
-                    # Handle both Object (Success) and String (Error) returns
-                    if isinstance(response_obj, str) and "ERROR" in response_obj:
-                         st.error(f"⚠️ {response_obj}")
-                    elif response_obj and response_obj.text:
-                        st.markdown(response_obj.text)
-                        st.session_state.messages.append({"role": "assistant", "content": response_obj.text})
+                    response = ask_orbit(ctx)
+                    if response and response.text:
+                        st.markdown(response.text)
+                        st.session_state.messages.append({"role": "assistant", "content": response.text})
                     else:
-                        st.error("⚠️ Connection Interrupted. Check API Keys.")
+                        st.error("⚠️ Connection Interrupted. Check Keys.")
 
     with tab2:
         col1, col2 = st.columns(2)
