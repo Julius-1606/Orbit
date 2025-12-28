@@ -20,7 +20,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 KEYS_STRING = os.environ.get("GEMINI_KEYS")
 
 # Fallback: If running locally without Env Vars, try to read from a local secrets file
-# (This part ensures it still works on your laptop if you haven't set Env Vars)
 if not TELEGRAM_TOKEN or not KEYS_STRING:
     try:
         # Check if we can find them in .streamlit/secrets.toml (Reusing dashboard secrets)
@@ -42,7 +41,7 @@ if not TELEGRAM_TOKEN or not GEMINI_API_KEYS:
     print("❌ FATAL ERROR: Secrets not found. Set TELEGRAM_TOKEN and GEMINI_KEYS.")
     sys.exit(1)
 
-CHAT_ID = "6882899041" # Chat ID is public info, essentially (it's just your user ID), so it's okay-ish to keep.
+CHAT_ID = "6882899041" 
 
 CURRENT_KEY_INDEX = 0
 
@@ -132,8 +131,10 @@ async def send_chaos():
 
     # --- LOGIC START ---
     if "--quiz" in sys.argv:
+        print("🫡 COMMAND RECEIVED: Forcing Quiz Protocol.")
         roll = 90
     elif "--fact" in sys.argv:
+        print("🫡 COMMAND RECEIVED: Forcing Knowledge Drop.")
         roll = 60
     else:
         roll = random.randint(1, 100)
@@ -154,8 +155,43 @@ async def send_chaos():
 
     # QUIZ
     elif 86 <= roll <= 98:
+        quotes = [
+            # Forex / Trading specific roasts 📈
+            "Your stop loss is tighter than your work ethic right now. 🛑💀",
+            "Green candles wait for no one. Neither does your rent. 🕯️💸",
+            "Market's volatile. Your focus? Non-existent. 📉🥴",
+            "Stop staring at the 1-minute chart and start grinding. ⏳😤",
+            "Liquidity sweep? Nah, just your attention span sweeping away. 🧹🌊",
+            "You're leveraging 100x on procrastination. Margin call imminent. 📞💣",
+            "Trading psychology rule #1: Don't be lazy. 🧠🚫",
+
+            # General Academic / Work / Life roasts 🔥
+            "Do it for the plot. (And the paycheck). 🎬💰",
+            "Standing on business? More like sleeping on business. 🛌📉",
+            "POV: You actually finished a task for once. 🤡🎉",
+            "Delulu is not the solulu if you don't do the work. 🦄🚫",
+            "Your GPA is screaming, bestie. Help it. 😱📉",
+            "Academic comeback season starts in 3... 2... never mind, just start. 🎓🏁",
+            "Crying is free, but success costs rent. Get to work. 😭💳",
+            "Touching grass is a reward, not a lifestyle. Get back inside. 🌿🚫",
+            "You're not 'protecting your peace', you're avoiding your problems. 🧘‍♀️🚩",
+            "Main character energy requires main character effort. 💅⚡",
+            "Your future self is watching you scroll TikTok with pure disappointment. 📱😒",
+            "Gaslight yourself into thinking you love this. It works. 🔥🧠",
+            "If you focused as hard as you cringe, you'd be a billionaire. 😬💸",
+            "Not the academic downfall arc... fix it immediately. 📉🚧",
+            "Brain rot is real, and you are patient zero. 🧟📉",
+            "Imagine explaining to your mom why you failed. Yikes. 👩‍👦😬",
+            "Locked in? Or locked out of reality? Focus. 🔒🌍",
+            "You can sleep when you're dead. Or when you graduate. ⚰️🎓",
+            "Manifestation requires action, not just vibes. ✨🔨",
+            "Stop waiting for motivation. It’s not an Uber; it’s not coming. 🚗💨"
+        ]
+        
         unit = random.choice(config['current_units'])
-        await bot.send_message(chat_id=CHAT_ID, text=f"🚨 <b>Incoming Pop Quiz: {unit}</b>", parse_mode='HTML')
+        quote = random.choice(quotes)
+
+        await bot.send_message(chat_id=CHAT_ID, text=f"🚨 <b>{quote}</b>\n\nIncoming Pop Quiz: <b>{unit}</b>", parse_mode='HTML')
         
         prompt = f"""
         Generate a multiple-choice quiz about {unit} for a 4th Year Student.
