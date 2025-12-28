@@ -72,13 +72,22 @@ def ask_orbit(prompt):
             return model.generate_content(prompt)
         except Exception as e:
             err_msg = str(e)
-            if "429" in err_msg or "403" in err_msg:
+            # Handle specific Leaked Key error (403) separate from Rate Limit (429)
+            if "leaked" in err_msg.lower() or "403" in err_msg:
+                st.toast(f"⚠️ Key #{st.session_state.key_index + 1} Burned (Leaked). Rotating...", icon="🔥")
                 if rotate_key():
-                    # Re-init model on rotation
-                    model = get_working_model() 
                     time.sleep(1)
                     continue
+            elif "429" in err_msg:
+                st.toast("⏳ Rate Limit Hit. Rotating...", icon="⏱️")
+                if rotate_key():
+                    time.sleep(1)
+                    continue
+            
             print(f"❌ Chat Error: {err_msg}")
+            # If we run out of retries or keys
+            if attempt == max_retries - 1:
+                return f"ERROR: {err_msg}"
             return None
     return None
 
@@ -131,12 +140,16 @@ if config:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
                     ctx = f"You are Orbit. User studies: {', '.join(config['current_units'])}. Difficulty: {config['difficulty']}. Question: {prompt}"
-                    response = ask_orbit(ctx)
-                    if response and response.text:
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "assistant", "content": response.text})
+                    response_obj = ask_orbit(ctx)
+                    
+                    # Handle both Object (Success) and String (Error) returns
+                    if isinstance(response_obj, str) and "ERROR" in response_obj:
+                         st.error(f"⚠️ {response_obj}")
+                    elif response_obj and response_obj.text:
+                        st.markdown(response_obj.text)
+                        st.session_state.messages.append({"role": "assistant", "content": response_obj.text})
                     else:
-                        st.error("⚠️ Connection Interrupted.")
+                        st.error("⚠️ Connection Interrupted. Check API Keys.")
 
     with tab2:
         col1, col2 = st.columns(2)
