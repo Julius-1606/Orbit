@@ -1,224 +1,273 @@
 import os
-import json
-import random
-import asyncio
-import sys
-import time
 import warnings
-
-# --- 🔇 SUPPRESS WARNINGS ---
 os.environ["GRPC_VERBOSITY"] = "ERROR"
 os.environ["GLOG_minloglevel"] = "2"
 warnings.filterwarnings("ignore")
 
+import streamlit as st
+import json
+import time
+import random
 import google.generativeai as genai
-from telegram import Bot
 
-# --- 🔐 SECRETS MANAGEMENT ---
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-KEYS_STRING = os.environ.get("GEMINI_KEYS")
+# --- 🔐 SECURE KEYCHAIN ---
+GEMINI_API_KEYS = []
+try:
+    raw_keys = st.secrets.get("GEMINI_KEYS")
+    if raw_keys:
+        if isinstance(raw_keys, list):
+            GEMINI_API_KEYS = raw_keys
+        else:
+            GEMINI_API_KEYS = [k.strip() for k in raw_keys.split(",")]
+except Exception:
+    pass
 
-if not TELEGRAM_TOKEN or not KEYS_STRING:
+if not GEMINI_API_KEYS:
     try:
-        import toml
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        secrets_path = os.path.join(script_dir, ".streamlit", "secrets.toml")
-        with open(secrets_path, "r") as f:
-            local_secrets = toml.load(f)
-            TELEGRAM_TOKEN = TELEGRAM_TOKEN or local_secrets.get("TELEGRAM_TOKEN")
-            raw_keys = local_secrets.get("GEMINI_KEYS")
-            if isinstance(raw_keys, list):
-                GEMINI_API_KEYS = raw_keys
-            elif isinstance(raw_keys, str):
-                GEMINI_API_KEYS = raw_keys.split(",")
-            else:
-                GEMINI_API_KEYS = []
+        keys_str = os.environ.get("GEMINI_KEYS")
+        if keys_str:
+            GEMINI_API_KEYS = [k.strip() for k in keys_str.split(",")]
     except Exception:
         pass
-else:
-    GEMINI_API_KEYS = KEYS_STRING.split(",") if KEYS_STRING else []
 
-# Clean keys
-GEMINI_API_KEYS = [k.strip() for k in GEMINI_API_KEYS if k.strip()]
+if not GEMINI_API_KEYS:
+    st.error("❌ NO API KEYS FOUND! Please configure secrets.")
+    st.stop()
 
-if not TELEGRAM_TOKEN or not GEMINI_API_KEYS:
-    print("❌ FATAL ERROR: Secrets not found.")
-    sys.exit(1)
+if "key_index" not in st.session_state: st.session_state.key_index = 0
 
-CHAT_ID = "6882899041" 
-CURRENT_KEY_INDEX = 0
-
-# --- CONFIGURATION & ROTATION ---
 def configure_genai():
-    global CURRENT_KEY_INDEX
-    if not GEMINI_API_KEYS: return
-    key = GEMINI_API_KEYS[CURRENT_KEY_INDEX]
     try:
-        genai.configure(api_key=key)
-    except Exception as e:
-        print(f"⚠️ Config Error on Key #{CURRENT_KEY_INDEX+1}: {e}")
+        current_key = GEMINI_API_KEYS[st.session_state.key_index]
+        genai.configure(api_key=current_key)
+        return True
+    except Exception: return False
 
 def rotate_key():
-    global CURRENT_KEY_INDEX
     if len(GEMINI_API_KEYS) > 1:
-        CURRENT_KEY_INDEX = (CURRENT_KEY_INDEX + 1) % len(GEMINI_API_KEYS)
-        print(f"🔄 Rotating to Backup Key #{CURRENT_KEY_INDEX + 1}...")
+        st.session_state.key_index = (st.session_state.key_index + 1) % len(GEMINI_API_KEYS)
         configure_genai()
-        # Re-run model selector to ensure new key sees the model
+        st.toast(f"🔄 Swapping to Key #{st.session_state.key_index + 1}", icon="🔑")
         global model
-        model = get_valid_model() 
+        model = get_valid_model()
         return True
     return False
 
-# 📡 SONAR: Find what models actually exist for you
+configure_genai()
+
+# 📡 SONAR (Copied from Orbit.py)
 def get_valid_model():
-    print("🔍 Sonar Scanning for valid models...")
     try:
         models = list(genai.list_models())
         valid_models = [m.name for m in models if 'generateContent' in m.supported_generation_methods]
         
-        # 1. Look for standard 1.5 flash
         for m in valid_models:
             if 'gemini-1.5-flash' in m and 'latest' not in m and 'exp' not in m:
-                print(f"✅ Locked on target: {m}")
                 return genai.GenerativeModel(m.replace("models/", ""))
         
-        # 2. Look for ANY flash (The fallback that worked for you!)
         for m in valid_models:
              if 'flash' in m and 'gemini-2' not in m and 'exp' not in m:
-                print(f"⚠️ Flash Fallback: {m}")
                 return genai.GenerativeModel(m.replace("models/", ""))
 
         if valid_models:
             return genai.GenerativeModel(valid_models[0].replace("models/", ""))
-            
-    except Exception as e:
-        print(f"⚠️ Scan failed: {e}")
-    
-    print("🤞 Sonar failed. Forcing 'gemini-1.5-flash'...")
+    except Exception:
+        pass
     return genai.GenerativeModel('gemini-1.5-flash')
 
-configure_genai()
 model = get_valid_model()
 
-# 🛡️ SAFE GENERATOR
-def generate_content_safe(prompt_text):
+def ask_orbit(prompt):
     global model
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            return model.generate_content(prompt_text)
+            return model.generate_content(prompt)
         except Exception as e:
             err_msg = str(e)
-            if "404" in err_msg:
-                print("⚠️ Model 404. Re-scanning...")
-                model = get_valid_model()
-                time.sleep(1)
-                continue
-            elif "429" in err_msg or "403" in err_msg:
-                print(f"⏳ API Issue ({err_msg}). Rotating...")
-                if rotate_key():
-                    time.sleep(2)
+            if "leaked" in err_msg.lower() or "403" in err_msg:
+                 st.toast(f"⚠️ Key #{st.session_state.key_index+1} Leaked. Rotating...", icon="🔥")
+                 if rotate_key():
+                    time.sleep(1)
                     continue
-                else:
-                    time.sleep(10)
-            else:
-                print(f"❌ API Error: {err_msg}")
-                return None
+            elif "429" in err_msg:
+                if rotate_key():
+                    time.sleep(1)
+                    continue
+            
+            print(f"❌ Chat Error: {err_msg}")
+            return None
     return None
 
-# 🛡️ TELEGRAM SAFETY VALVE
-async def send_safe_message(bot, chat_id, text):
-    try:
-        # Try sending with HTML (Bold text)
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode='HTML')
-    except Exception as e:
-        print(f"⚠️ HTML Parse Error: {e}. Sending raw text.")
-        # Fallback to plain text if HTML fails (Prevents crash)
-        await bot.send_message(chat_id=chat_id, text=text)
+# --- PAGE SETUP ---
+st.set_page_config(page_title="Orbit Command Center", page_icon="🛰️", layout="wide")
+
+def get_config_path():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(script_dir, 'config.json')
 
 def load_config():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, 'config.json')
     try:
-        with open(config_path, 'r') as f: return json.load(f)
+        with open(get_config_path(), 'r') as f: return json.load(f)
     except FileNotFoundError: return None
 
-async def send_chaos():
-    bot = Bot(token=TELEGRAM_TOKEN)
-    config = load_config()
-    
-    if not config: return 
+def save_config(config):
+    with open(get_config_path(), 'w') as f: json.dump(config, f, indent=4)
+    st.toast("Settings Saved! 💾", icon="✅")
 
-    if "--quiz" in sys.argv: roll = 90
-    elif "--fact" in sys.argv: roll = 60
-    else: roll = random.randint(1, 100)
-    print(f"🎲 Rolled a {roll}")
+st.title("🛰️ Orbit: Your Personal Academic Weapon")
+st.markdown("*Doc in the making*")
+config = load_config()
 
-    if roll <= 50:
-        print("Silence is golden.")
-        return
+if config:
+    with st.sidebar:
+        st.header("👤 Commander Profile")
+        st.text_input("Username", value=config.get('user_name', 'Commander'), disabled=True)
+        st.divider()
+        diffs = ["Easy (Review)", "Medium (Standard)", "Hard (Exam Prep)", "Asian Parent Expectations (Extreme)"]
+        curr_diff = config.get('difficulty', "Asian Parent Expectations (Extreme)")
+        idx = diffs.index(curr_diff) if curr_diff in diffs else 3
+        new_diff = st.selectbox("Difficulty Level", diffs, index=idx)
+        if new_diff != curr_diff:
+            config['difficulty'] = new_diff
+            save_config(config)
+        st.divider()
+        st.header("🎯 Active Loadout")
+        for unit in config['current_units']: st.caption(f"• {unit}")
 
-    elif 51 <= roll <= 85:
-        topic = random.choice(config['interests'])
-        prompt = f"Tell me a mind-blowing, short random fact about {topic}. Keep it under 2 sentences."
-        response = generate_content_safe(prompt)
-        if response and response.text:
-            msg = f"🎱 <b>Magic-∞ Fact:</b>\n\n{response.text}"
-            await send_safe_message(bot, CHAT_ID, msg)
-        else:
-            print("⚠️ No response for Fact")
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 Orbit Chat", "📝 Chaos Quiz", "📚 Curriculum Manager", "🎲 Chaos Settings"])
 
-    elif 86 <= roll <= 98:
-        quotes = [
-            "Your stop loss is tighter than your work ethic right now. 🛑💀",
-            "Green candles wait for no one. Neither does your rent. 🕯️💸",
-            "Market's volatile. Your focus? Non-existent. 📉🥴",
-            "Stop staring at the 1-minute chart and start grinding. ⏳😤",
-            "Do it for the plot. (And the paycheck). 🎬💰",
-            "Standing on business? More like sleeping on business. 🛌📉",
-            "Delulu is not the solulu if you don't do the work. 🦄🚫",
-            "Academic comeback season starts in 3... 2... never mind, just start. 🎓🏁",
-            "Not the academic downfall arc... fix it immediately. 📉🚧",
-            "Brain rot is real, and you are patient zero. 🧟📉",
-            "Locked in? Or locked out of reality? Focus. 🔒🌍"
-        ]
+    with tab1:
+        st.subheader("🧠 Neural Link")
+        if "messages" not in st.session_state: st.session_state.messages = []
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]): st.markdown(msg["content"])
+        if prompt := st.chat_input("Ask Orbit..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with st.chat_message("user"): st.markdown(prompt)
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    ctx = f"You are Orbit. User studies: {', '.join(config['current_units'])}. Difficulty: {config['difficulty']}. Question: {prompt}"
+                    response_obj = ask_orbit(ctx)
+                    if response_obj and response_obj.text:
+                        st.markdown(response_obj.text)
+                        st.session_state.messages.append({"role": "assistant", "content": response_obj.text})
+                    else:
+                        st.error("⚠️ Connection Interrupted. Check Keys.")
+
+    # --- TAB 2: CHAOS QUIZ GENERATOR ---
+    with tab2:
+        st.subheader("📝 Generated Quiz")
+        st.caption("Generates a random number of questions (1-10) for a random unit.")
         
-        unit = random.choice(config['current_units'])
-        quote = random.choice(quotes)
-        
-        # Send Hype Message safely
-        await send_safe_message(bot, CHAT_ID, f"🚨 <b>{quote}</b>\n\nIncoming Pop Quiz: <b>{unit}</b>")
-        
-        prompt = f"""
-        Generate a multiple-choice quiz about {unit} for a 4th Year Student.
-        Strict JSON format: {{"question": "...", "options": ["A","B","C","D"], "correct_id": 0, "explanation": "..."}}
-        Limits: Question < 250 chars, Options < 100 chars.
-        """
-        response = generate_content_safe(prompt)
-        if response and response.text:
-            try:
-                text = response.text.replace('```json', '').replace('```', '').strip()
-                data = json.loads(text)
+        col_q1, col_q2 = st.columns([1, 3])
+        with col_q1:
+            if st.button("🎲 Roll for Quiz", use_container_width=True):
+                if not config['current_units']:
+                    st.error("No units loaded!")
+                else:
+                    with st.spinner("Generating Chaos..."):
+                        # 1. Random Parameters
+                        target_unit = random.choice(config['current_units'])
+                        num_questions = random.randint(1, 10)
+                        
+                        # 2. Batch Request (Saves API Limits)
+                        q_prompt = f"""
+                        Generate {num_questions} multiple-choice questions about {target_unit} for a 4th Year Student.
+                        Difficulty: {config['difficulty']}.
+                        
+                        Return ONLY a raw JSON list of objects. No markdown formatting.
+                        Format:
+                        [
+                            {{
+                                "q": "Question text",
+                                "o": ["Option A", "Option B", "Option C", "Option D"],
+                                "a": "Correct Option Text (e.g. Option A)",
+                                "e": "Explanation"
+                            }}
+                        ]
+                        """
+                        response = ask_orbit(q_prompt)
+                        
+                        if response and response.text:
+                            try:
+                                clean_text = response.text.replace("```json", "").replace("```", "").strip()
+                                quiz_data = json.loads(clean_text)
+                                st.session_state['quiz_data'] = quiz_data
+                                st.session_state['quiz_unit'] = target_unit
+                                st.session_state['quiz_answers'] = {} # Reset answers
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Failed to parse quiz: {e}")
+                        else:
+                            st.error("AI returned silence.")
+
+        with col_q2:
+            if 'quiz_data' in st.session_state:
+                st.info(f"**Unit:** {st.session_state['quiz_unit']} | **Questions:** {len(st.session_state['quiz_data'])}")
                 
-                # LIST vs DICT Fix
-                if isinstance(data, list):
-                    data = data[0]
-                
-                await bot.send_poll(
-                    chat_id=CHAT_ID,
-                    question=data['question'][:297],
-                    options=[o[:97] for o in data['options']],
-                    type="quiz",
-                    correct_option_id=data['correct_id'],
-                    explanation=data['explanation'][:197]
-                )
-            except Exception as e:
-                print(f"Quiz Error: {e}")
-        else:
-             print("⚠️ No response for Quiz")
-    else:
-        await send_safe_message(bot, CHAT_ID, "👑 <b>GOD MODE ACTIVATED</b>")
+                with st.form("quiz_form"):
+                    for i, q in enumerate(st.session_state['quiz_data']):
+                        st.markdown(f"**{i+1}. {q['q']}**")
+                        # Use a unique key for each question's radio button
+                        st.session_state['quiz_answers'][i] = st.radio(
+                            "Select answer:", 
+                            q['o'], 
+                            key=f"q_{i}", 
+                            index=None,
+                            label_visibility="collapsed"
+                        )
+                        st.divider()
+                    
+                    submitted = st.form_submit_button("Submit Quiz")
+                    
+                    if submitted:
+                        score = 0
+                        total = len(st.session_state['quiz_data'])
+                        for i, q in enumerate(st.session_state['quiz_data']):
+                            user_ans = st.session_state['quiz_answers'].get(i)
+                            if user_ans == q['a']:
+                                score += 1
+                                st.success(f"Q{i+1}: Correct! ✅")
+                            else:
+                                st.error(f"Q{i+1}: Wrong. Correct: {q['a']}")
+                                st.caption(f"ℹ️ {q['e']}")
+                        
+                        st.metric("Final Score", f"{score}/{total}")
+                        if score == total:
+                            st.balloons()
+            else:
+                st.write("No active quiz. Hit the Roll button.")
 
-if __name__ == "__main__":
-    asyncio.run(send_chaos())
+    with tab3:
+        col1, col2 = st.columns(2)
+        with col1:
+            years = list(config['unit_inventory'].keys())
+            if years:
+                y = st.selectbox("Year", years)
+                if isinstance(config['unit_inventory'][y], dict):
+                    sems = list(config['unit_inventory'][y].keys())
+                    s = st.selectbox("Semester", sems)
+                    avail = config['unit_inventory'][y][s]
+                else:
+                    avail = config['unit_inventory'][y]
+                    s = "General"
+                adds = st.multiselect(f"Add from {y}-{s}", avail)
+                if st.button("➕ Add"):
+                    for u in adds:
+                        if u not in config['current_units']: config['current_units'].append(u)
+                    save_config(config)
+                    st.rerun()
+        with col2:
+            for unit in config['current_units']:
+                if st.checkbox(f"Drop {unit}", key=unit):
+                    config['current_units'].remove(unit)
+                    save_config(config)
+                    st.rerun()
+
+    with tab4:
+        curr = st.text_area("Interests", ", ".join(config['interests']))
+        if st.button("Update Interests"):
+            config['interests'] = [x.strip() for x in curr.split(",")]
+            save_config(config)
+            st.success("Updated!")
