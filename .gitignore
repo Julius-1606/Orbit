@@ -1,0 +1,12 @@
+Ignore Streamlit secrets
+
+.streamlit/secrets.toml
+
+Ignore Python cache
+
+pycache/
+*.pyc
+
+Ignore local config backups if you have any
+
+*.bak
